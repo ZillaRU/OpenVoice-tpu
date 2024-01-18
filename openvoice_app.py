@@ -24,7 +24,7 @@ en_base_speaker_tts.load_ckpt(en_ckpt_base)
 zh_base_speaker_tts = BaseSpeakerTTS(f'{zh_ckpt_base}/config.json', device=device)
 zh_base_speaker_tts.load_ckpt(zh_ckpt_base)
 tone_color_converter = ToneColorConverter(f'{ckpt_converter}/config.json', device=device)
-tone_color_converter.load_ckpt(ckpt_converter)
+tone_color_converter.load_ckpt(ckpt_converter, max_len=2048)
 
 # load speaker embeddings
 en_source_default_se = torch.load(f'{en_ckpt_base}/en_default_se.pth').to(device)
@@ -78,6 +78,7 @@ def predict(prompt, style, audio_file_pth, agree):
 
     else:
         tts_model = en_base_speaker_tts
+        # source_se is the feature vector of the default speaker's tone color in TTS
         if style == 'default':
             source_se = en_source_default_se
         else:
@@ -115,6 +116,7 @@ def predict(prompt, style, audio_file_pth, agree):
     
     # note diffusion_conditioning not used on hifigan (default mode), it will be empty but need to pass it to model.inference
     try:
+        # extract the tone color feature of the target speaker
         target_se, audio_name = se_extractor.get_se(speaker_wav, tone_color_converter, target_dir='processed', vad=True)
     except Exception as e:
         text_hint += f"[ERROR] Get target tone color error {str(e)} \n"
@@ -128,6 +130,7 @@ def predict(prompt, style, audio_file_pth, agree):
         )
 
     src_path = f'{output_dir}/tmp.wav'
+    # Run the TTS to generate a reading audio with default speaker in the specified style
     tts_model.tts(prompt, src_path, speaker=style, language=language)
 
     save_path = f'{output_dir}/output.wav'
@@ -148,6 +151,50 @@ def predict(prompt, style, audio_file_pth, agree):
         speaker_wav,
     )
 
+def convert_only(src_wav, tgt_wav, agree):
+    # initialize a empty info
+    text_hint = ''
+    # agree with the terms
+    if agree == False:
+        text_hint += '[ERROR] Please accept the Terms & Condition!\n'
+        gr.Warning("Please accept the Terms & Condition!")
+        return (
+            text_hint,
+            None
+        )
+    try:
+        # extract the tone color features of the source speaker and target speaker
+        source_se, audio_name_src = se_extractor.get_se(src_wav, tone_color_converter, target_dir='processed', vad=True)
+        target_se, audio_name_tgt = se_extractor.get_se(tgt_wav, tone_color_converter, target_dir='processed', vad=True)
+    except Exception as e:
+        text_hint += f"[ERROR] Get source/target tone color error {str(e)} \n"
+        gr.Warning(
+            "[ERROR] Get source/target tone color error {str(e)} \n"
+        )
+        return (
+            text_hint,
+            None,
+            None,
+        )
+
+    src_path = src_wav
+
+    save_path = f'{output_dir}/output.wav'
+    # Run the tone color converter
+    encode_message = "@MyShell"
+    tone_color_converter.convert(
+        audio_src_path=src_path, 
+        src_se=source_se, 
+        tgt_se=target_se, 
+        output_path=save_path,
+        message=encode_message)
+
+    text_hint += f'''Get response successfully \n'''
+
+    return (
+        text_hint,
+        save_path
+    )
 
 
 title = "MyShell OpenVoice"
@@ -223,53 +270,79 @@ with gr.Blocks(analytics_enabled=False) as demo:
                 gr.Markdown(markdown_table_v2)
             with gr.Row():
                 gr.Markdown(description)
-        with gr.Column():
-            gr.Video('https://github.com/myshell-ai/OpenVoice/assets/40556743/3cba936f-82bf-476c-9e52-09f0f417bb2f', autoplay=True)
+        # with gr.Column():
+        #     gr.Video('https://github.com/myshell-ai/OpenVoice/assets/40556743/3cba936f-82bf-476c-9e52-09f0f417bb2f', autoplay=True)
             
     with gr.Row():
         gr.HTML(wrapped_markdown_content)
 
-    with gr.Row():
-        with gr.Column():
-            input_text_gr = gr.Textbox(
-                label="Text Prompt",
-                info="One or two sentences at a time is better. Up to 200 text characters.",
-                value="He hoped there would be stew for dinner, turnips and carrots and bruised potatoes and fat mutton pieces to be ladled out in thick, peppered, flour-fattened sauce.",
-            )
-            style_gr = gr.Dropdown(
-                label="Style",
-                info="Select a style of output audio for the synthesised speech. (Chinese only support 'default' now)",
-                choices=['default', 'whispering', 'cheerful', 'terrified', 'angry', 'sad', 'friendly'],
-                max_choices=1,
-                value="default",
-            )
-            ref_gr = gr.Audio(
-                label="Reference Audio",
-                info="Click on the ✎ button to upload your own target speaker audio",
-                type="filepath",
-                value="resources/demo_speaker2.mp3",
-            )
-            tos_gr = gr.Checkbox(
-                label="Agree",
-                value=False,
-                info="I agree to the terms of the cc-by-nc-4.0 license-: https://github.com/myshell-ai/OpenVoice/blob/main/LICENSE",
-            )
+    with gr.Tab('TTS + Conversion mode'):
+        with gr.Row():
+            with gr.Column():
+                input_text_gr = gr.Textbox(
+                    label="Text Prompt",
+                    info="One or two sentences at a time is better. Up to 200 text characters.",
+                    value="He hoped there would be stew for dinner, turnips and carrots and bruised potatoes and fat mutton pieces to be ladled out in thick, peppered, flour-fattened sauce.",
+                )
+                style_gr = gr.Dropdown(
+                    label="Style",
+                    info="Select a style of output audio for the synthesised speech. (Chinese only support 'default' now)",
+                    choices=['default', 'whispering', 'cheerful', 'terrified', 'angry', 'sad', 'friendly'],
+                    max_choices=1,
+                    value="default",
+                )
+                ref_gr = gr.Audio(
+                    label="Reference Audio",
+                    info="Click on the ✎ button to upload your own target speaker audio",
+                    type="filepath",
+                    value="resources/demo_speaker2.mp3",
+                )
+                tos_gr = gr.Checkbox(
+                    label="Agree",
+                    value=True,
+                    info="I agree to the terms of the cc-by-nc-4.0 license-: https://github.com/myshell-ai/OpenVoice/blob/main/LICENSE",
+                )
 
-            tts_button = gr.Button("Send", elem_id="send-btn", visible=True)
+                tts_button = gr.Button("Send", elem_id="send-btn", visible=True)
 
+            with gr.Column():
+                out_text_gr = gr.Text(label="Info")
+                audio_gr = gr.Audio(label="Synthesised Audio", autoplay=True)
+                ref_audio_gr = gr.Audio(label="Reference Audio Used")
 
-        with gr.Column():
-            out_text_gr = gr.Text(label="Info")
-            audio_gr = gr.Audio(label="Synthesised Audio", autoplay=True)
-            ref_audio_gr = gr.Audio(label="Reference Audio Used")
+                gr.Examples(examples,
+                            label="Examples",
+                            inputs=[input_text_gr, style_gr, ref_gr, tos_gr],
+                            outputs=[out_text_gr, audio_gr, ref_audio_gr],
+                            fn=predict,
+                            cache_examples=False,)
+                tts_button.click(predict, [input_text_gr, style_gr, ref_gr, tos_gr], outputs=[out_text_gr, audio_gr, ref_audio_gr])
 
-            gr.Examples(examples,
-                        label="Examples",
-                        inputs=[input_text_gr, style_gr, ref_gr, tos_gr],
-                        outputs=[out_text_gr, audio_gr, ref_audio_gr],
-                        fn=predict,
-                        cache_examples=False,)
-            tts_button.click(predict, [input_text_gr, style_gr, ref_gr, tos_gr], outputs=[out_text_gr, audio_gr, ref_audio_gr])
+    with gr.Tab('Conversion-only mode'):
+        with gr.Row():
+            with gr.Column():
+                cvt_src_gr = gr.Audio(
+                    label="Source Audio",
+                    info="Click on the ✎ button to upload your own source speaker audio",
+                    type="filepath",
+                )
+                cvt_ref_gr = gr.Audio(
+                    label="Reference Audio",
+                    info="Click on the ✎ button to upload your own target speaker audio",
+                    type="filepath",
+                    value="resources/demo_speaker2.mp3",
+                )
+                cvt_tos_gr = gr.Checkbox(
+                    label="Agree",
+                    value=True,
+                    info="I agree to the terms of the cc-by-nc-4.0 license-: https://github.com/myshell-ai/OpenVoice/blob/main/LICENSE",
+                )
+                cvt_button = gr.Button("Send", elem_id="send-btn", visible=True)
+            with gr.Column():
+                out_text_gr = gr.Text(label="Info")
+                cvt_audio_gr = gr.Audio(label="Synthesised Audio", autoplay=True)
+                cvt_button.click(convert_only, [cvt_src_gr, cvt_ref_gr, cvt_tos_gr], outputs=[out_text_gr, cvt_audio_gr])
+
 
 demo.queue()  
 demo.launch(debug=True, show_api=True, share=args.share,server_name="0.0.0.0")

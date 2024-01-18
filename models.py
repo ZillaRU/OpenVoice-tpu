@@ -467,7 +467,7 @@ class SynthesizerTrn(nn.Module):
             self.dp = DurationPredictor(hidden_channels, 256, 3, 0.5, gin_channels=gin_channels)
             self.emb_g = nn.Embedding(n_speakers, gin_channels)
 
-    def infer(self, x, x_lengths, sid=None, noise_scale=1, length_scale=1, noise_scale_w=1., sdp_ratio=0.2, max_len=None):
+    def infer(self, x, x_lengths, sid=None, noise_scale=1, length_scale=1, noise_scale_w=1., sdp_ratio=0.2, max_len=1024):
         x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths)
         if self.n_speakers > 0:
             g = self.emb_g(sid).unsqueeze(-1) # [b, h, 1]
@@ -493,13 +493,13 @@ class SynthesizerTrn(nn.Module):
         # import pdb; pdb.set_trace()
         # torch.onnx.export(self.dec,(torch.cat(((z*y_mask),torch.zeros(1,192,2048-z.shape[2])),axis=2),g),'2048_dec.onnx',opset_version=10)
         # torch.onnx.export(self.dec,(torch.cat(((z*y_mask),torch.zeros(1,192,1024-z.shape[2])),axis=2),g),'1024_dec.onnx',opset_version=10)
-        out = torch.from_numpy(self.dec([torch.cat([z*y_mask,torch.zeros(z.shape[0],z.shape[1],1024-z.shape[2])], axis=2).numpy(), g.numpy()])[0])[:,:,:(z.shape[2]*256)]
+        out = torch.from_numpy(self.dec([torch.cat([z*y_mask,torch.zeros(z.shape[0],z.shape[1],max_len-z.shape[2])], axis=2).numpy(), g.numpy()])[0])[:,:,:(z.shape[2]*256)]
         # o_1024 = self.dec(torch.cat(((z*y_mask),torch.zeros(1,192,1024-z.shape[2])),axis=2), g=g)[:,:,:(z.shape[2]*256)]
         # o = self.dec((z * y_mask)[:,:,:max_len], g=g)
         # print("-------------",torch.mean(torch.abs(out-o_1024)))
         return out, attn, y_mask, (z, z_p, m_p, logs_p)
 
-    def voice_conversion(self, y, y_lengths, sid_src, sid_tgt, tau=1.0):
+    def voice_conversion(self, y, y_lengths, sid_src, sid_tgt, tau=1.0, max_len=2048):
         g_src = sid_src
         g_tgt = sid_tgt
         z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g_src, tau=tau)
@@ -508,5 +508,5 @@ class SynthesizerTrn(nn.Module):
         # o_hat = self.dec(z_hat * y_mask, g=g_tgt)
         # import pdb; pdb.set_trace()
         # torch.onnx.export(self.dec,(torch.cat(((z_hat*y_mask),torch.zeros(1,192,1024-z_hat.shape[2])),axis=2),g_tgt),'1024_dec_convert.onnx',opset_version=10)
-        o_hat = torch.from_numpy(self.dec([torch.cat([z_hat*y_mask,torch.zeros(z_hat.shape[0],z_hat.shape[1],1024-z_hat.shape[2])], axis=2).numpy(), g_tgt.numpy()])[0])[:,:,:(z_hat.shape[2]*256)]
+        o_hat = torch.from_numpy(self.dec([torch.cat([z_hat*y_mask,torch.zeros(z_hat.shape[0],z_hat.shape[1],max_len-z_hat.shape[2])], axis=2).numpy(), g_tgt.numpy()])[0])[:,:,:(z_hat.shape[2]*256)]
         return o_hat, y_mask, (z, z_p, z_hat)

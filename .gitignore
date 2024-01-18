@@ -6,3 +6,7 @@ checkpoints
 trash
 examples*
 .env
+*.bmodel
+*.pth
+*.tar.gz
+*.onnx
