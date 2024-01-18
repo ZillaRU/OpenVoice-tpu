@@ -1,6 +1,5 @@
-## A voice cloning demo running on BM1684X
-Using the open-source solution OpenVoice from myshell.ai.
-
+## A voice cloning demo running on BM1684X using the open-source solution OpenVoice
+## Please download bmodels [here](https://drive.google.com/drive/folders/1B14nYL0gOfTWkA--YetxuJx9im49Bhzz?usp=drive_link).
 <div align="center">
   <div>&nbsp;</div>
   <img src="resources/openvoicelogo.jpg" width="400"/> 
