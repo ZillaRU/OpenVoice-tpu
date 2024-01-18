@@ -9,6 +9,7 @@ import librosa
 from text import text_to_sequence
 from mel_processing import spectrogram_torch
 from models import SynthesizerTrn
+from npuengine import EngineOV
 
 
 class OpenVoiceBaseClass(object):
@@ -32,9 +33,13 @@ class OpenVoiceBaseClass(object):
         self.hps = hps
         self.device = device
 
-    def load_ckpt(self, ckpt_path):
-        checkpoint_dict = torch.load(ckpt_path, map_location=torch.device(self.device))
+    def load_ckpt(self, ckpt_path, max_len=1024, quantize='f16'):
+        checkpoint_dict = torch.load(os.path.join(ckpt_path,'checkpoint.pth'), map_location=torch.device(self.device))
         a, b = self.model.load_state_dict(checkpoint_dict['model'], strict=False)
+        if os.path.exists(os.path.join(ckpt_path, f'decoder_{max_len}_{quantize}.bmodel')):
+            self.model.dec = None
+            del self.model.dec
+            self.model.dec = EngineOV(os.path.join(ckpt_path, f'decoder_{max_len}_{quantize}.bmodel'), device_id=0)
         print("Loaded checkpoint '{}'".format(ckpt_path))
         print('missing/unexpected keys:', a, b)
 
@@ -102,7 +107,7 @@ class ToneColorConverter(OpenVoiceBaseClass):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        if kwargs.get('enable_watermark', True):
+        if False:#kwargs.get('enable_watermark', True):
             import wavmark
             self.watermark_model = wavmark.load_model().to(self.device)
         else:

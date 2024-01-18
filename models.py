@@ -2,11 +2,11 @@ import math
 import torch
 from torch import nn
 from torch.nn import functional as F
-
+import time
 import commons
 import modules
 import attentions
-
+# from npuengine import EngineOV
 from torch.nn import Conv1d, ConvTranspose1d, Conv2d
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
 
@@ -424,16 +424,21 @@ class SynthesizerTrn(nn.Module):
     ):
         super().__init__()
 
-        self.dec = Generator(
-            inter_channels,
-            resblock,
-            resblock_kernel_sizes,
-            resblock_dilation_sizes,
-            upsample_rates,
-            upsample_initial_channel,
-            upsample_kernel_sizes,
-            gin_channels=gin_channels,
-        )
+        # self.dec = Generator(
+        #     inter_channels,
+        #     resblock,
+        #     resblock_kernel_sizes,
+        #     resblock_dilation_sizes,
+        #     upsample_rates,
+        #     upsample_initial_channel,
+        #     upsample_kernel_sizes,
+        #     gin_channels=gin_channels,
+        # )
+
+        # self.dec_en = EngineOV("./checkpoints/base_speakers/EN/dec_1-192-1024_1-256-1_f32-0118.bmodel", device_id=0)
+
+        self.dec = None
+
         self.enc_q = PosteriorEncoder(
             spec_channels,
             inter_channels,
@@ -468,10 +473,10 @@ class SynthesizerTrn(nn.Module):
             g = self.emb_g(sid).unsqueeze(-1) # [b, h, 1]
         else:
             g = None
-
+        st = time.time()
         logw = self.sdp(x, x_mask, g=g, reverse=True, noise_scale=noise_scale_w) * sdp_ratio \
             + self.dp(x, x_mask, g=g) * (1 - sdp_ratio)
-
+        print(f'************************** sdp + dp time: {time.time() - st}')
         w = torch.exp(logw) * x_mask * length_scale
         w_ceil = torch.ceil(w)
         y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
@@ -483,9 +488,16 @@ class SynthesizerTrn(nn.Module):
         logs_p = torch.matmul(attn.squeeze(1), logs_p.transpose(1, 2)).transpose(1, 2) # [b, t', t], [b, t, d] -> [b, d, t']
 
         z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * noise_scale
+        st = time.time()
         z = self.flow(z_p, y_mask, g=g, reverse=True)
-        o = self.dec((z * y_mask)[:,:,:max_len], g=g)
-        return o, attn, y_mask, (z, z_p, m_p, logs_p)
+        # import pdb; pdb.set_trace()
+        # torch.onnx.export(self.dec,(torch.cat(((z*y_mask),torch.zeros(1,192,2048-z.shape[2])),axis=2),g),'2048_dec.onnx',opset_version=10)
+        # torch.onnx.export(self.dec,(torch.cat(((z*y_mask),torch.zeros(1,192,1024-z.shape[2])),axis=2),g),'1024_dec.onnx',opset_version=10)
+        out = torch.from_numpy(self.dec([torch.cat([z*y_mask,torch.zeros(z.shape[0],z.shape[1],1024-z.shape[2])], axis=2).numpy(), g.numpy()])[0])[:,:,:(z.shape[2]*256)]
+        # o_1024 = self.dec(torch.cat(((z*y_mask),torch.zeros(1,192,1024-z.shape[2])),axis=2), g=g)[:,:,:(z.shape[2]*256)]
+        # o = self.dec((z * y_mask)[:,:,:max_len], g=g)
+        # print("-------------",torch.mean(torch.abs(out-o_1024)))
+        return out, attn, y_mask, (z, z_p, m_p, logs_p)
 
     def voice_conversion(self, y, y_lengths, sid_src, sid_tgt, tau=1.0):
         g_src = sid_src
@@ -493,5 +505,8 @@ class SynthesizerTrn(nn.Module):
         z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g_src, tau=tau)
         z_p = self.flow(z, y_mask, g=g_src)
         z_hat = self.flow(z_p, y_mask, g=g_tgt, reverse=True)
-        o_hat = self.dec(z_hat * y_mask, g=g_tgt)
+        # o_hat = self.dec(z_hat * y_mask, g=g_tgt)
+        # import pdb; pdb.set_trace()
+        # torch.onnx.export(self.dec,(torch.cat(((z_hat*y_mask),torch.zeros(1,192,1024-z_hat.shape[2])),axis=2),g_tgt),'1024_dec_convert.onnx',opset_version=10)
+        o_hat = torch.from_numpy(self.dec([torch.cat([z_hat*y_mask,torch.zeros(z_hat.shape[0],z_hat.shape[1],1024-z_hat.shape[2])], axis=2).numpy(), g_tgt.numpy()])[0])[:,:,:(z_hat.shape[2]*256)]
         return o_hat, y_mask, (z, z_p, z_hat)
