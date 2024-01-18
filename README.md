@@ -1,5 +1,5 @@
 ## A voice cloning demo running on BM1684X using the open-source solution OpenVoice
-## Please download bmodels [here](https://drive.google.com/drive/folders/1B14nYL0gOfTWkA--YetxuJx9im49Bhzz?usp=drive_link).
+## Please download bmodels [here](https://drive.google.com/file/d/1ErVDiMFvTwRj649pyoJI7rRDAh5pTGVT/view?usp=drive_link) and run `tar -zxfv checkpoints.tar.gz`.
 <div align="center">
   <div>&nbsp;</div>
   <img src="resources/openvoicelogo.jpg" width="400"/> 
